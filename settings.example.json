@@ -1,0 +1,6 @@
+{
+  "WorkbookPath": "C:\\Work\\Reading.xlsx",
+  "WorksheetName": "Reading",
+  "IgnoredHeaders": ["Read count", "Record ID"],
+  "Diagnostics": false
+}

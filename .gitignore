@@ -1,0 +1,15 @@
+/build/
+/dist/
+/packages/
+/test-results/
+settings.json
+*.xlsx
+*.xlsm
+*.xls
+*.obj
+*.lib
+*.exp
+*.pdb
+*.log
+*.jsonl
+.vs/
