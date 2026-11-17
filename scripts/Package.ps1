@@ -2,7 +2,7 @@ param([switch]$SkipBuild)
 $ErrorActionPreference='Stop'
 $repo=Split-Path $PSScriptRoot -Parent
 if(-not $SkipBuild){& (Join-Path $PSScriptRoot 'build.ps1')}
-$version='0.1.1'
+$version='0.1.2'
 $package=Join-Path $repo "dist\Excel-boundary-$version-windows-x64"
 New-Item -ItemType Directory -Path $package,(Join-Path $package 'docs') -Force | Out-Null
 foreach($name in 'ReadingSmooth.dll','ReadingBoundary.xll'){

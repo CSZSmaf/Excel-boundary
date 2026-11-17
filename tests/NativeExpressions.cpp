@@ -14,6 +14,7 @@ int main(){
         const auto original=p+L" > (Content.Size."+suffix+L" * this.target.Scale) ? "+p+L" + ScrollingLayer.freeFloatingPadding : (Content.Size."+suffix+L" * this.target.Scale) + ScrollingLayer.freeFloatingPadding";
         const auto maximum=ContentMaximum(original);
         check(maximum.find(L"ScrollingLayer.CodexEnabled > 0")!=std::wstring::npos,"scoped maximum");
+        check(maximum.find(L"ScrollingLayer.isProgrammaticFreeFloating == 0")!=std::wstring::npos,"programmatic moves preserve logical coordinates");
         check(maximum.find(original)!=std::wstring::npos,"inactive maximum preserved");
         check((maximum.find(L"Viewport.Size.Y * 0.5")!=std::wstring::npos)==(axis==L'Y'),"centered lower boundary");
         const auto minimum=FrozenMinimum(L"("+p+L" > 0 ? -ScrollingLayer.freeFloatingPadding : "+p+L" - ScrollingLayer.freeFloatingPadding) * ScrollingLayer.isProgrammaticFreeFloating");

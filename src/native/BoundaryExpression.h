@@ -27,7 +27,9 @@ inline std::wstring ContentMaximum(std::wstring expression) {
         const std::wstring viewportFactor=axis==L'Y'?L" * 0.5":L"";
         std::wstring replacement=L"Max(ScrollingLayer.CodexFrozen"+std::wstring(1,axis)+L" * this.target.Scale, Content.Size."+axis+L" * this.target.Scale - Viewport.Size."+axis+viewportFactor+L")";
 #ifdef CODEX_NATIVE_ADDIN
-        replacement=L"(ScrollingLayer.CodexEnabled > 0 ? "+replacement+L" : ("+original+L"))";
+        // Excel updates its logical row/column before issuing a programmatic move.
+        // Honor that move so rendered cells and hit testing use the same origin.
+        replacement=L"(ScrollingLayer.CodexEnabled > 0 && ScrollingLayer.isProgrammaticFreeFloating == 0 ? "+replacement+L" : ("+original+L"))";
 #endif
         size_t offset=0;
         while((offset=expression.find(original,offset))!=std::wstring::npos){expression.replace(offset,original.size(),replacement);offset+=replacement.size();}

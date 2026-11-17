@@ -88,7 +88,7 @@ static LRESULT NativeProbeMessage(UINT message,WPARAM sample) {
     std::vector<std::shared_ptr<NativeProbe>> copy;
     {std::lock_guard<std::mutex> lock(probeGate);for(auto& entry:nativeProbes)copy.push_back(entry.second);}
     if(message==WM_APP+81) {
-        for(auto& probe:copy)probe->properties.InsertScalar(L"isProgrammaticFreeFloating",0);
+        for(auto& probe:copy)probe->properties.InsertScalar(L"isProgrammaticFreeFloating",sample?1.0f:0.0f);
         return copy.size();
     }
     if(message==WM_APP+82) {

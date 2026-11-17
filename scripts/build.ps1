@@ -55,7 +55,7 @@ try {
     if ($Lab) {
         & $compiler @nativeFlags (Join-Path $repo 'tests\PrivateDesktop.cpp') "/Fo$output\PrivateDesktop.obj" /link "/OUT:$output\PrivateDesktop.exe" user32.lib
         if ($LASTEXITCODE) { throw 'Private desktop runner build failed.' }
-        & $csc /nologo /target:winexe /platform:x64 /debug+ /reference:Microsoft.CSharp.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll "/out:$output\ExcelIntegration.exe" (Join-Path $repo 'tests\ExcelIntegration.cs')
+        & $csc /nologo /target:winexe /platform:x64 /debug+ /reference:Microsoft.CSharp.dll /reference:System.Windows.Forms.dll /reference:System.Web.Extensions.dll "/out:$output\ExcelIntegration.exe" (Join-Path $repo 'tests\ExcelIntegration.cs') (Join-Path $repo 'tests\HitTestChecks.cs')
         if ($LASTEXITCODE) { throw 'Excel integration test build failed.' }
     }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib }

@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using Excel = Microsoft.Office.Interop.Excel;
 
-[assembly: AssemblyVersion("0.1.1.0")]
-[assembly: AssemblyFileVersion("0.1.1.0")]
+[assembly: AssemblyVersion("0.1.2.0")]
+[assembly: AssemblyFileVersion("0.1.2.0")]
 [assembly: ComVisible(false)]
 
 [ComImport, Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsDual)]

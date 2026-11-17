@@ -85,8 +85,13 @@ class ExcelIntegration {
             Check(!(bool)Status(addin)["extentPending"],"Maintenance resumes after edit/search recovery");
             var receiver=FindWindowEx(new IntPtr(-3),IntPtr.Zero,"CodexExcelDynamicBoundary10","CodexExcelBoundary_"+pid);
             SendMessage(receiver,0x8055,IntPtr.Zero,IntPtr.Zero);
+            SendMessage(receiver,0x8051,IntPtr.Zero,IntPtr.Zero);Pump(100);
             for(int phase=0;phase<6;++phase){SendMessage(receiver,0x8056,new IntPtr(phase),IntPtr.Zero);for(int sample=0;sample<8;++sample){Pump(50);SendMessage(receiver,0x8052,new IntPtr(phase*100+sample),IntPtr.Zero);}}
             SendMessage(receiver,0x8055,new IntPtr(1),IntPtr.Zero);
+            // Restore the property changed by the gesture probe before using Excel's
+            // programmatic scrolling, whose backend flag has remained true.
+            SendMessage(receiver,0x8051,new IntPtr(1),IntPtr.Zero);Pump(100);
+            HitTestChecks.Run((object)app,(object)sheet,receiver,logs,Pump);
             Pump(1200);sheet.Cells[37,1].Select();app.ActiveWindow.ScrollRow=27;
             app.EnableEvents=false;sheet.Cells[37,1].Value2="Appended with events disabled";app.EnableEvents=true;Pump(2300);
             var appended=Status(addin);Check(Convert.ToInt32(appended["blankRow"])==38,"Event-disabled paste detected");
