@@ -20,6 +20,7 @@ sealed class DynamicExtentController:IDisposable {
     readonly bool diagnostics;
     readonly string worksheetName;
     readonly List<string> dataRegions=new List<string>();
+    readonly List<bool> regionHasHeader=new List<bool>();
     bool[] dataColumns;
     dynamic entryRange;
     dynamic layoutRange,layoutWindow;
@@ -47,6 +48,9 @@ sealed class DynamicExtentController:IDisposable {
     public uint Revision {get;private set;}
     public bool Dirty=true;
     public bool GeometryDirty=true;
+#if BOUNDARY_LAB
+    internal static int EmptyFindOverride;
+#endif
     public bool ScrollingBusy {get{return SendMessage(receiver,0x8057,IntPtr.Zero,IntPtr.Zero)!=IntPtr.Zero;}}
     public int NativeBindings {get{return (int)SendMessage(receiver,0x8058,IntPtr.Zero,IntPtr.Zero);}}
     public DynamicExtentController(object application,object workbook,uint pid,string folder,string[] excludedHeaders,bool diagnosticLogging=false) {
@@ -131,31 +135,63 @@ sealed class DynamicExtentController:IDisposable {
         GeometryDirty=false;return false;
     }
     void CacheDataColumns(dynamic sheet,int columns) {
-        dataRegions.Clear();dataColumns=new bool[columns];
+        dataRegions.Clear();regionHasHeader.Clear();dataColumns=new bool[columns];
         dynamic header=sheet.Range["A1:"+ColumnName(columns)+"1"];
         object raw=header.Value2;object[,] names=raw as object[,];Marshal.ReleaseComObject(header);
-        int first=0;
+        int first=0;bool hasHeader=false;
         for(int column=1;column<=columns+1;++column) {
             bool included=column<=columns;
             if(included) {
                 string name=Convert.ToString(names==null?raw:names[1,column]);
                 included=!ignoredHeaders.Contains(name);
                 dataColumns[column-1]=included;
+                if(included&&name.Length>0)hasHeader=true;
             }
             if(included&&first==0)first=column;
-            if(!included&&first>0){dataRegions.Add(ColumnName(first)+":"+ColumnName(column-1));first=0;}
+            if(!included&&first>0){dataRegions.Add(ColumnName(first)+":"+ColumnName(column-1));regionHasHeader.Add(hasHeader);first=0;hasHeader=false;}
         }
     }
-    int LastReadingRow(dynamic sheet,int columns) {
+    static dynamic FindLast(dynamic range,int lookIn,int order) {
+#if BOUNDARY_LAB
+        if((EmptyFindOverride&(order==2?1:2))!=0)return null;
+#endif
+        return range.Find("*",Type.Missing,lookIn,2,order,2,false,false,false);
+    }
+    bool TryLastReadingRow(dynamic sheet,int columns,out int last) {
         if(dataColumns==null||dataColumns.Length!=columns)CacheDataColumns(sheet,columns);
-        int last=1;
-        foreach(string address in dataRegions) {
-            dynamic range=sheet.Range[address];
-            dynamic found=range.Find("*",Type.Missing,-4163,Type.Missing,1,2,false,Type.Missing,false);
-            if(found!=null){last=Math.Max(last,(int)found.Row);Marshal.ReleaseComObject(found);}
-            Marshal.ReleaseComObject(range);
+        last=1;
+        for(int i=0;i<dataRegions.Count;++i) {
+            dynamic range=sheet.Range[dataRegions[i]],found=null;
+            try {
+                found=FindLast(range,-4163,1);
+                // A displayed header must be found. A null result here is an incomplete scan.
+                if(found==null&&regionHasHeader[i])return false;
+                if(found!=null)last=Math.Max(last,(int)found.Row);
+            } finally {
+                if(found!=null)Marshal.ReleaseComObject(found);
+                Marshal.ReleaseComObject(range);
+            }
         }
-        return last;
+        return true;
+    }
+    bool TryContentExtent(dynamic sheet,out int columns,out int dataRow) {
+        columns=1;dataRow=1;
+        dynamic cells=sheet.Cells,found=null;
+        try {
+            found=FindLast(cells,-4123,2);
+            if(found!=null)columns=(int)found.Column;
+            else {
+                dynamic used=sheet.UsedRange,functions=excel.WorksheetFunction;
+                try {
+                    // Only a genuinely empty sheet may fall back to A1:A2.
+                    if((double)functions.CountA(used)>0)return false;
+                } finally {Marshal.ReleaseComObject(functions);Marshal.ReleaseComObject(used);}
+            }
+        } finally {
+            if(found!=null)Marshal.ReleaseComObject(found);
+            Marshal.ReleaseComObject(cells);
+        }
+        return TryLastReadingRow(sheet,columns,out dataRow);
     }
     public bool PollEntryRow() {
         if(entryRange==null)return false;
@@ -170,14 +206,15 @@ sealed class DynamicExtentController:IDisposable {
     }
     public bool Refresh(bool fullGeometry=false) {
         if(previous!=null&&!Dirty&&!fullGeometry)return false;
+        if(ExcelEditState.ReadMode()!=0)return false;
         dynamic active=excel.ActiveWorkbook;
         if(active==null)return false;
         bool matches=(string)active.FullName==workbookPath;Marshal.ReleaseComObject(active);
         if(!matches)return false;
         dynamic sheet=excel.ActiveSheet;
-        dynamic lastColumn=sheet.Cells.Find("*",Type.Missing,-4123,Type.Missing,2,2,false,Type.Missing,false);
-        int columns=lastColumn==null?1:(int)lastColumn.Column;
-        int dataRow=LastReadingRow(sheet,columns);
+        try {
+        int columns,dataRow;
+        if(!TryContentExtent(sheet,out columns,out dataRow))return false;
         int rows=Math.Min(1048576,dataRow+1);
         bool follow=false;
         if(appendedAtEnd&&rows>BoundaryRow&&BoundaryRow>0) {
@@ -201,9 +238,7 @@ sealed class DynamicExtentController:IDisposable {
         uint dpi=GetDpiForWindow(excelWindow);
         bool pointsChanged=previous==null||!previous.SequenceEqual(points);
         bool changed=pointsChanged||columns!=LastColumn||rows!=BoundaryRow||dpi!=previousDpi||frozenColumns!=previousFrozenColumns||frozenRows!=previousFrozenRows;
-        LastDataRow=dataRow;
-        if(lastColumn!=null)Marshal.ReleaseComObject(lastColumn);
-        if(pointsChanged||layoutRange==null)CacheLayout(sheet,columns,rows,points);
+        if(ExcelEditState.ReadMode()!=0)return false;
         if(changed) {
             var payload=new byte[32+points.Length*8];
             var header=new uint[]{12,(uint)columns,(uint)rows,Revision+1,dpi,frozenColumns,frozenRows,0};
@@ -218,10 +253,13 @@ sealed class DynamicExtentController:IDisposable {
             previousFrozenColumns=frozenColumns;previousFrozenRows=frozenRows;
             if(diagnostics)File.AppendAllText(log,"{\"revision\":"+Revision+",\"lastDataRow\":"+dataRow+",\"boundaryRow\":"+rows+",\"lastColumn\":"+columns+",\"dpi\":"+dpi+"}"+Environment.NewLine);
         }
+        LastDataRow=dataRow;
+        if(pointsChanged||layoutRange==null)CacheLayout(sheet,columns,rows,points);
         if(follow)CenterInputRow();
         appendedAtEnd=false;
         if(fullGeometry)GeometryDirty=false;
         Dirty=false;return changed;
+        } finally {Marshal.ReleaseComObject(sheet);}
     }
     public void CenterInputRow() {
         if(previous==null)return;

@@ -69,6 +69,20 @@ class ExcelIntegration {
             app.Visible=true;app.WindowState=-4137;Pump(1600);
             var initial=Status(addin);Check((bool)initial["nativeReady"]&&(bool)initial["active"]&&Convert.ToInt32(initial["nativeBindings"])>0,"Target native scope active");
             Check(Convert.ToInt32(initial["lastRow"])==36&&Convert.ToInt32(initial["blankRow"])==37,"Helper columns excluded from content extent");
+            Check(Convert.ToInt32(initial["editMode"])==0,"Native edit-state query reports Ready");
+            // Fault injection stays inside the add-in; no keyboard, mouse or desktop capture.
+            foreach(int mode in new[]{1,2,4,-1}) {
+                var before=Status(addin);addin.Object.LabSetState(mode,3);Pump(450);var editing=Status(addin);
+                Check(Object.Equals(before["revision"],editing["revision"])&&Object.Equals(before["maintenanceCount"],editing["maintenanceCount"]),"Editing defers all COM maintenance: "+mode);
+                Check(Convert.ToInt32(editing["skippedEdit"])>Convert.ToInt32(before["skippedEdit"]),"Edit gate observed the mode: "+mode);
+                Check(Convert.ToInt32(editing["blankRow"])==37&&Convert.ToInt32(editing["lastColumn"])==15,"Editing preserves the published extent");
+            }
+            foreach(int missingFind in new[]{1,2}) {
+                addin.Object.LabSetState(-2,missingFind);Pump(450);var missing=Status(addin);
+                Check(Convert.ToInt32(missing["blankRow"])==37&&Convert.ToInt32(missing["lastColumn"])==15&&(bool)missing["extentPending"],"Empty search preserves last good extent: "+missingFind);
+            }
+            addin.Object.LabSetState(-2,0);Pump(650);
+            Check(!(bool)Status(addin)["extentPending"],"Maintenance resumes after edit/search recovery");
             var receiver=FindWindowEx(new IntPtr(-3),IntPtr.Zero,"CodexExcelDynamicBoundary10","CodexExcelBoundary_"+pid);
             SendMessage(receiver,0x8055,IntPtr.Zero,IntPtr.Zero);
             for(int phase=0;phase<6;++phase){SendMessage(receiver,0x8056,new IntPtr(phase),IntPtr.Zero);for(int sample=0;sample<8;++sample){Pump(50);SendMessage(receiver,0x8052,new IntPtr(phase*100+sample),IntPtr.Zero);}}
@@ -79,15 +93,23 @@ class ExcelIntegration {
             dynamic visible=app.ActiveWindow.ActivePane.VisibleRange;
             double fraction=((double)sheet.Cells[38,1].Top+(double)sheet.Cells[38,1].Height/2-(double)visible.Top)/(double)visible.Height;
             Check(fraction>0.35&&fraction<0.65,"Entry row centered after append");
+            sheet.Cells[37,1].ClearContents();Pump(900);
+            Check(Convert.ToInt32(Status(addin)["blankRow"])==37,"Deleting the last record still contracts the boundary");
             other=app.Workbooks.Add();Pump(650);var suspended=Status(addin);Pump(500);var stillSuspended=Status(addin);
             Check(!(bool)suspended["active"]&&!(bool)suspended["timerRunning"]&&(int)SendMessage(receiver,0x8058,IntPtr.Zero,IntPtr.Zero)==0,"Other workbook restores native boundaries");
             Check(Object.Equals(suspended["ticks"],stillSuspended["ticks"]),"No timer callbacks while other workbook active");
-            book.Activate();Pump(700);Check((bool)Status(addin)["active"],"Returning to target resumes boundaries");
+            addin.Object.LabSetState(4,3);book.Activate();Pump(450);
+            Check(!(bool)Status(addin)["active"],"Initial activation waits for reference selection to end");
+            addin.Object.LabSetState(-2,0);Pump(700);Check((bool)Status(addin)["active"],"Returning to target resumes boundaries");
             dynamic single=book.Worksheets.Add();single.Name="Single";single.Cells[1,1].Value2="Title";single.Cells[2,1].Value2="One item";Pump(1200);
             Check(Convert.ToInt32(Status(addin)["blankRow"])==3,"Single-column header is supported");
+            single.Range["A1:A2"].ClearContents();Pump(800);
+            Check(Convert.ToInt32(Status(addin)["blankRow"])==2&&Convert.ToInt32(Status(addin)["lastColumn"])==1,"A truly empty sheet can use A1:A2");
+            single.Cells[3,2].Value2="New content";Pump(800);
+            Check(Convert.ToInt32(Status(addin)["blankRow"])==4&&Convert.ToInt32(Status(addin)["lastColumn"])==2,"An emptied sheet can expand again");
             sheet.Activate();Pump(700);var final=Status(addin);Check(Convert.ToString(final["error"])=="","No add-in errors");
             passed=true;
-            File.WriteAllText(Path.Combine(logs,"integration.json"),new JavaScriptSerializer().Serialize(new {passed,pid,automaticLoad=true,ignoredHeaders=true,eventDisabledAppend=true,entryVerticalFraction=fraction,inactiveTimerCallbacks=0,singleColumn=true,initial,final}));
+            File.WriteAllText(Path.Combine(logs,"integration.json"),new JavaScriptSerializer().Serialize(new {passed,pid,automaticLoad=true,ignoredHeaders=true,editStateQuery=true,simulatedEditModes=new[]{1,2,4,-1},emptySearchRecovery=true,deleteAndClear=true,eventDisabledAppend=true,entryVerticalFraction=fraction,inactiveTimerCallbacks=0,singleColumn=true,initial,final}));
             return 0;
         }catch(Exception exception){File.WriteAllText(Path.Combine(logs,"error.txt"),exception.ToString());return 1;}
         finally {

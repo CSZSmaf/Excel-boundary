@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 using Excel = Microsoft.Office.Interop.Excel;
 
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.1.1.0")]
+[assembly: AssemblyFileVersion("0.1.1.0")]
 [assembly: ComVisible(false)]
 
 [ComImport, Guid("B65AD801-ABAF-11D0-BB8B-00A0C90F2744"), InterfaceType(ComInterfaceType.InterfaceIsDual)]
@@ -19,7 +19,12 @@ public interface IDTExtensibility2 {
     [DispId(5)] void OnBeginShutdown([In, MarshalAs(UnmanagedType.SafeArray, SafeArraySubType=VarEnum.VT_VARIANT)] ref Array custom);
 }
 [ComVisible(true), Guid("4CF9614F-D9B0-4688-9F28-24874CC8FDB8"), InterfaceType(ComInterfaceType.InterfaceIsDual)]
-public interface IBoundaryStatus { [DispId(1)] string Status(); }
+public interface IBoundaryStatus {
+    [DispId(1)] string Status();
+#if BOUNDARY_LAB
+    [DispId(101)] void LabSetState(int editMode, int emptyFind);
+#endif
+}
 
 // Keep the original registration identity so existing installations can be upgraded in place.
 #if BOUNDARY_LAB
@@ -41,10 +46,10 @@ public sealed class ReadingAddin : IDTExtensibility2, IBoundaryStatus {
     BoundarySettings settings;
     MaintenanceSchedule schedule = new MaintenanceSchedule();
     string folder, logs, error = "", activeSheet = "";
-    bool nativeReady, active, pending, working, disposed;
+    bool nativeReady, active, pending, working, disposed, waitingForReady;
     long selectAfter;
     uint pid;
-    int ticks, maintenanceCount, skippedMotion;
+    int ticks, maintenanceCount, skippedMotion, skippedEdit, editMode = -1;
     double maxMaintenanceMs, totalMaintenanceMs;
 #if BOUNDARY_LAB
     const bool background = true;
@@ -123,13 +128,25 @@ public sealed class ReadingAddin : IDTExtensibility2, IBoundaryStatus {
         }
         pending = false;
     }
+    bool CanReadWorkbook() {
+        editMode = ExcelEditState.ReadMode();
+        if (editMode != 0) {
+            waitingForReady = true; ++skippedEdit;
+            return false;
+        }
+        if (waitingForReady) {
+            waitingForReady = false;
+            if (controller != null) { controller.Dirty = true; controller.GeometryDirty = true; }
+        }
+        return true;
+    }
     void Tick(object sender, EventArgs args) {
         if (working || disposed) return;
         working = true; ++ticks;
         try {
             if (!nativeReady) { timer.Stop(); return; }
             long now = MaintenanceSchedule.Now;
-            if (pending) { if (now < selectAfter) return; SelectWorkbook(); }
+            if (pending) { if (now < selectAfter || !CanReadWorkbook()) return; SelectWorkbook(); }
             if (!active || controller == null) return;
             uint foregroundPid; GetWindowThreadProcessId(GetForegroundWindow(), out foregroundPid);
             if (!background && foregroundPid != pid) return;
@@ -141,8 +158,9 @@ public sealed class ReadingAddin : IDTExtensibility2, IBoundaryStatus {
             bool entry = schedule.EntryDue(now);
             bool geometry = schedule.GeometryDue(now, background ? UInt32.MaxValue : idle, input.Tick, controller.GeometryDirty);
             if (!controller.Dirty && !entry && !geometry) return;
+            if (!CanReadWorkbook()) return;
             var clock = Stopwatch.StartNew();
-            if (controller.Dirty) controller.Refresh();
+            if (controller.Dirty) { controller.Refresh(); if (controller.Dirty) return; }
             if (entry) { controller.PollEntryRow(); schedule.EntryDone(now); }
             if (geometry) { controller.CheckGeometry(); schedule.GeometryDone(now, input.Tick); }
             clock.Stop(); ++maintenanceCount;
@@ -158,11 +176,21 @@ public sealed class ReadingAddin : IDTExtensibility2, IBoundaryStatus {
             pid, nativeReady, active, timerRunning = timer != null && timer.Enabled, ticks,
             blankRow = controller == null ? 0 : controller.BoundaryRow,
             lastRow = controller == null ? 0 : controller.LastDataRow,
+            lastColumn = controller == null ? 0 : controller.LastColumn,
+            revision = controller == null ? 0 : controller.Revision,
+            extentPending = controller != null && controller.Dirty,
             nativeBindings = controller == null ? 0 : controller.NativeBindings,
             busy = controller != null && controller.ScrollingBusy,
-            maintenanceCount, skippedMotion, maxMaintenanceMs, totalMaintenanceMs, error
+            editMode, skippedEdit, maintenanceCount, skippedMotion, maxMaintenanceMs, totalMaintenanceMs, error
         });
     }
+#if BOUNDARY_LAB
+    public void LabSetState(int mode, int emptyFind) {
+        ExcelEditState.ModeOverride = mode;
+        DynamicExtentController.EmptyFindOverride = emptyFind;
+        if (controller != null) controller.Dirty = true;
+    }
+#endif
     void Stop() {
         if (disposed) return;
         disposed = true;
